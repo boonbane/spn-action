@@ -1,0 +1,30 @@
+name: Setup spn
+description: Download, install, and configure spn
+author: boonbane
+branding:
+  icon: package
+  color: gray-dark
+
+inputs:
+  version:
+    description: The version of spn to install (e.g. "latest", "canary", "0.12.0")
+    required: true
+  cache:
+    description: Enable spn's build cache
+    default: 'true'
+  cache-key:
+    description: Extra cache key component, to control cache sharing
+    default: ''
+  save:
+    description: Whether this run saves the build cache. auto saves on pushes to the default branch only; true and false force it.
+    default: auto
+
+outputs:
+  version:
+    description: What spn --version printed
+
+runs:
+  using: node24
+  main: dist/main/index.js
+  post: dist/post/index.js
+  post-if: success()
