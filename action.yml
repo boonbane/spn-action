@@ -1,0 +1,36 @@
+name: Setup spn
+description: Download, install, and configure spn
+author: boonbane
+branding:
+  icon: package
+  color: gray-dark
+
+inputs:
+  version:
+    description: The version of spn to install (e.g. "latest", "canary", "0.12.0")
+    required: true
+  cache:
+    description: Cache spn's storage between runs
+    default: 'true'
+  cache-key:
+    description: Extra key component for the build cache, to keep jobs apart or to start one from scratch
+    default: ''
+  save:
+    description: Whether this run saves the build cache. auto saves on pushes to the default branch and on pull requests; true and false force it.
+    default: auto
+  job-matrix:
+    description: Internal; leave it unset. The job's matrix, which keeps each leg's build cache apart.
+    default: ${{ toJSON(matrix) }}
+  job-status:
+    description: Internal; leave it unset. The job's status when the caches are saved.
+    default: ${{ job.status }}
+
+outputs:
+  version:
+    description: What spn --version printed
+
+runs:
+  using: node24
+  main: dist/main/index.js
+  post: dist/post/index.js
+  post-if: '!cancelled()'
