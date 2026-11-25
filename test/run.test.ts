@@ -104,6 +104,14 @@ const listed: Case[] = [
     expect: { delta: ['delta/blob/n/n.o', 'delta/strong/n.txt', 'delta/weak/a.txt', 'delta/weak/n.txt'] },
   },
   {
+    name: 'a file its build added to a blob the base holds is saved',
+    runner: pull,
+    succeeded: true,
+    base: store,
+    files: { 'store/blob/a/log.txt': NOW },
+    expect: { delta: ['delta/blob/a/log.txt', 'delta/weak/a.txt'] },
+  },
+  {
     name: 'one that built nothing the base lacks saves no delta',
     runner: pull,
     succeeded: true,

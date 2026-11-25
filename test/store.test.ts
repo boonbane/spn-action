@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { expect } from 'bun:test'
 import { Store } from '../src/store.ts'
@@ -15,8 +16,8 @@ const disk = Testing.sandbox()
 const memory = Testing.sandbox()
 
 const entry = (id: string, used: number): Store.Entry => {
-  const [kind, name] = id.split('/') as [Store.Kind, string]
-  return { kind, name, used }
+  const [kind, ...rest] = id.split('/') as [Store.Kind, ...string[]]
+  return { kind, name: rest.join('/'), used }
 }
 
 const names = (entries: Store.Entry[]): string[] => entries.map(Store.id)
@@ -26,23 +27,23 @@ type Split = { name: string; entries: Store.Entry[]; prune: boolean; live: strin
 const splits: Split[] = [
   {
     name: 'what the job used is live and the rest is stale',
-    entries: [entry('blob/a', now), entry('blob/b', old), entry('strong/c', old), entry('weak/d', now)],
+    entries: [entry('blob/a/a.o', now), entry('blob/b/b.o', old), entry('strong/c', old), entry('weak/d', now)],
     prune: true,
-    live: ['blob/a', 'weak/d'],
-    stale: ['blob/b', 'strong/c'],
+    live: ['blob/a/a.o', 'weak/d'],
+    stale: ['blob/b/b.o', 'strong/c'],
   },
   {
     name: 'an entry used exactly at the cut is live',
-    entries: [entry('blob/a', SINCE)],
+    entries: [entry('blob/a/a.o', SINCE)],
     prune: true,
-    live: ['blob/a'],
+    live: ['blob/a/a.o'],
     stale: [],
   },
   {
     name: 'a job that failed prunes nothing',
-    entries: [entry('blob/a', now), entry('blob/b', old)],
+    entries: [entry('blob/a/a.o', now), entry('blob/b/b.o', old)],
     prune: false,
-    live: ['blob/a', 'blob/b'],
+    live: ['blob/a/a.o', 'blob/b/b.o'],
     stale: [],
   },
 ]
@@ -58,14 +59,21 @@ type Delta = { name: string; entries: Store.Entry[]; base: string[]; prune: bool
 const deltas: Delta[] = [
   {
     name: 'what the base already holds is left out',
-    entries: [entry('blob/a', now), entry('blob/b', now), entry('strong/c', now), entry('strong/d', now)],
-    base: ['blob/a', 'strong/c'],
+    entries: [entry('blob/a/a.o', now), entry('blob/b/b.o', now), entry('strong/c', now), entry('strong/d', now)],
+    base: ['blob/a/a.o', 'strong/c'],
     prune: true,
-    expect: ['blob/b', 'strong/d'],
+    expect: ['blob/b/b.o', 'strong/d'],
+  },
+  {
+    name: 'a file added to a blob the base holds is kept',
+    entries: [entry('blob/a/a.o', now), entry('blob/a/log.txt', now)],
+    base: ['blob/a/a.o'],
+    prune: true,
+    expect: ['blob/a/log.txt'],
   },
   {
     name: 'what the job did not use is left out',
-    entries: [entry('blob/a', old), entry('strong/b', old), entry('weak/c', old)],
+    entries: [entry('blob/a/a.o', old), entry('strong/b', old), entry('weak/c', old)],
     base: [],
     prune: true,
     expect: [],
@@ -79,10 +87,10 @@ const deltas: Delta[] = [
   },
   {
     name: 'a job that failed keeps what an earlier delta held',
-    entries: [entry('blob/a', old), entry('blob/b', old), entry('weak/c', old), entry('weak/d', now)],
-    base: ['blob/a', 'weak/d'],
+    entries: [entry('blob/a/a.o', old), entry('blob/b/b.o', old), entry('weak/c', old), entry('weak/d', now)],
+    base: ['blob/a/a.o', 'weak/d'],
     prune: false,
-    expect: ['blob/b', 'weak/c', 'weak/d'],
+    expect: ['blob/b/b.o', 'weak/c', 'weak/d'],
   },
 ]
 
@@ -102,34 +110,44 @@ Testing.each('Store on disk', [{ name: 'entries are scanned, set aside, put back
   Testing.file(root, 'store/weak/c.txt', PAST)
 
   const entries = Store.scan(dirs)
-  expect(names(entries).toSorted()).toEqual(['blob/a', 'strong/b.txt', 'weak/c.txt'])
-  expect(Store.ids(dirs).toSorted()).toEqual(['blob/a', 'strong/b.txt', 'weak/c.txt'])
-  expect(entries.find((it) => it.kind === 'strong')?.used).toEqual(PAST)
+  expect(names(entries).toSorted()).toEqual(['blob/a/a.o', 'strong/b.txt', 'weak/c.txt'])
+  expect(Store.ids(dirs).toSorted()).toEqual(['blob/a/a.o', 'strong/b.txt', 'weak/c.txt'])
+  expect(entries.map((it) => it.used)).toEqual([PAST, PAST, PAST])
 
   const moved = Store.shift(entries, dirs, aside)
   expect(moved).toEqual(entries)
   expect(Testing.files(path.join(root, 'store'))).toEqual([])
+  expect(fs.existsSync(path.join(dirs.blob, 'a'))).toEqual(false)
   expect(Testing.files(path.join(root, 'aside'))).toEqual(['blob/a/a.o', 'strong/b.txt', 'weak/c.txt'])
+  expect(Store.scan(aside).map((it) => it.used)).toEqual([PAST, PAST, PAST])
   expect(Store.shift(entries, dirs, aside)).toEqual([])
 
   Store.shift(moved, aside, dirs)
   expect(Testing.files(path.join(root, 'store'))).toEqual(['blob/a/a.o', 'strong/b.txt', 'weak/c.txt'])
-  expect(Store.scan(dirs).find((it) => it.kind === 'strong')?.used).toEqual(PAST)
+  expect(Store.scan(dirs).map((it) => it.used)).toEqual([PAST, PAST, PAST])
 
-  Testing.file(root, 'staged/blob/a/other.o')
-  Testing.file(root, 'staged/blob/d/d.o')
+  Testing.file(root, 'staged/blob/a/a.o', LATER)
+  Testing.file(root, 'staged/blob/a/log.txt', LATER)
+  Testing.file(root, 'staged/blob/d/d.o', PAST)
+  Testing.file(root, 'staged/strong/b.txt', LATER)
   Testing.file(root, 'staged/strong/e.txt')
   Testing.file(root, 'staged/weak/c.txt', LATER)
   Store.merge(staged, dirs)
   expect(Testing.files(path.join(root, 'store'))).toEqual([
     'blob/a/a.o',
+    'blob/a/log.txt',
     'blob/d/d.o',
     'strong/b.txt',
     'strong/e.txt',
     'weak/c.txt',
   ])
-  expect(Store.scan(dirs).find((it) => it.kind === 'weak')?.used).toEqual(LATER)
-  expect(Testing.files(path.join(root, 'staged'))).toEqual(['blob/a/other.o'])
+  const merged = Object.fromEntries(Store.scan(dirs).map((it) => [Store.id(it), it.used]))
+  expect(merged['blob/a/a.o']).toEqual(LATER)
+  expect(merged['blob/a/log.txt']).toEqual(LATER)
+  expect(merged['blob/d/d.o']).toEqual(PAST)
+  expect(merged['strong/b.txt']).toEqual(PAST)
+  expect(merged['weak/c.txt']).toEqual(LATER)
+  expect(Testing.files(path.join(root, 'staged'))).toEqual(['blob/a/a.o', 'strong/b.txt'])
 })
 
 Testing.each('Store.recall', [{ name: 'what was remembered, or nothing' }], () => {
@@ -147,5 +165,5 @@ Testing.each('Store.recall', [{ name: 'what was remembered, or nothing' }], () =
   Testing.file(root, 'store/blob/a/a.o')
   Testing.file(root, 'store/weak/b.txt')
   Store.remember(store)
-  expect(Store.recall(store)).toEqual(new Set(['blob/a', 'weak/b.txt']))
+  expect(Store.recall(store)).toEqual(new Set(['blob/a/a.o', 'weak/b.txt']))
 })

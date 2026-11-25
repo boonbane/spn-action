@@ -27,4 +27,16 @@ export namespace Files {
       fs.rmSync(target, { recursive: true, force: true })
     } catch {}
   }
+
+  export function stamp(target: string, time: number): void {
+    try {
+      fs.utimesSync(target, time / 1000, time / 1000)
+    } catch {}
+  }
+
+  export function reap(dir: string): void {
+    try {
+      fs.rmdirSync(dir)
+    } catch {}
+  }
 }
