@@ -33,14 +33,21 @@ export namespace Store {
 
   export const id = (entry: Entry): string => `${entry.kind}/${entry.name}`
 
+  const names = (kind: Kind, dir: string): string[] =>
+    kind === 'blob'
+      ? Files.list(dir).flatMap((digest) => Files.list(path.join(dir, digest)).map((file) => `${digest}/${file}`))
+      : Files.list(dir)
+
+  const clock = (kind: Kind, name: string): string => (kind === 'blob' ? path.dirname(name) : name)
+
   export const ids = (dirs: Dirs): string[] =>
-    KINDS.flatMap((kind) => Files.list(dirs[kind]).map((name) => `${kind}/${name}`))
+    KINDS.flatMap((kind) => names(kind, dirs[kind]).map((name) => `${kind}/${name}`))
 
   export function scan(dirs: Dirs): Entry[] {
     const entries: Entry[] = []
     for (const kind of KINDS) {
-      for (const name of Files.list(dirs[kind])) {
-        const stat = fs.lstatSync(path.join(dirs[kind], name), { throwIfNoEntry: false })
+      for (const name of names(kind, dirs[kind])) {
+        const stat = fs.lstatSync(path.join(dirs[kind], clock(kind, name)), { throwIfNoEntry: false })
         if (stat !== undefined) entries.push({ kind, name, used: stat.mtimeMs })
       }
     }
@@ -62,21 +69,29 @@ export namespace Store {
       return !base.has(id(entry)) && (used(entry, cut) || !cut.prune)
     })
 
+  function move(entry: Entry, from: Dirs, to: Dirs): boolean {
+    const source = path.join(from[entry.kind], entry.name)
+    const target = path.join(to[entry.kind], entry.name)
+    if (entry.kind !== 'blob') return Files.move(source, target)
+    const home = path.dirname(target)
+    const held = fs.lstatSync(home, { throwIfNoEntry: false })?.mtimeMs ?? 0
+    fs.mkdirSync(home, { recursive: true })
+    const moved = Files.move(source, target)
+    if (moved) Files.stamp(home, Math.max(held, entry.used))
+    Files.reap(moved ? path.dirname(source) : home)
+    return moved
+  }
+
   export function shift(entries: Entry[], from: Dirs, to: Dirs): Entry[] {
     for (const kind of KINDS) fs.mkdirSync(to[kind], { recursive: true })
-    return entries.filter((entry) =>
-      Files.move(path.join(from[entry.kind], entry.name), path.join(to[entry.kind], entry.name)),
-    )
+    return entries.filter((entry) => move(entry, from, to))
   }
 
   export function merge(from: Dirs, to: Dirs): void {
-    for (const kind of KINDS) {
-      fs.mkdirSync(to[kind], { recursive: true })
-      for (const name of Files.list(from[kind])) {
-        const target = path.join(to[kind], name)
-        if (kind === 'weak' || !fs.existsSync(target)) Files.move(path.join(from[kind], name), target)
-      }
-    }
+    const fresh = scan(from).filter(
+      (entry) => entry.kind === 'weak' || !fs.existsSync(path.join(to[entry.kind], entry.name)),
+    )
+    shift(fresh, from, to)
   }
 
   export function remember(store: Store): void {
